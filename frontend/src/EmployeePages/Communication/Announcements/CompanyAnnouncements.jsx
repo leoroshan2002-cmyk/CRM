@@ -1,0 +1,217 @@
+import { useState } from "react";
+import { motion } from "framer-motion";
+import { Pin, Search } from "lucide-react";
+import FullAnnouncements from "./FullAnnouncements";
+import AnnouncementForm from "./AnnouncementForm";
+import useAnnouncement from "../../../Hooks/useAnnouncement";
+import { useAuth } from "../../../context/AuthContext";
+
+
+const CompanyAnnouncements = () => {
+  const [showForm, setShowForm] = useState(false);
+  const [showAnnouncementForm, setShowAnnouncementForm] = useState(false);
+  const { fetchAnnouncements, announcements, updateRead, togglePin } = useAnnouncement();
+
+  const [selectedAnnouncements, setSelectedAnnouncements] = useState([]);
+  const [search, setSearch] = useState("");
+  const { user } = useAuth();
+
+  const handleRead = async (item) => {
+    setShowForm(true)
+    setSelectedAnnouncements(item);
+
+    if (!item.isRead) {
+      await updateRead(item._id);
+      await fetchAnnouncements();
+    }
+  }
+
+  function handleChange(e) {
+    setSearch(e.target.value);
+  }
+
+  const filteredAnnouncements = announcements.filter((item) => {
+    const department = user?.department || user?.profile?.department;
+    const announcementDepartment = item.role?.trim().toLowerCase();
+    const matchesDepartment = !department ||
+      announcementDepartment === "all" ||
+      announcementDepartment === department.trim().toLowerCase();
+
+    if (!matchesDepartment) return false;
+    if (!search) return true;
+    const searchLower = search.toLowerCase();
+    return (
+      item.title?.toLowerCase().includes(searchLower) ||
+      item.description?.toLowerCase().includes(searchLower) ||
+      item.author?.toLowerCase().includes(searchLower) ||
+      item.date?.toLowerCase().includes(searchLower)
+    );
+  });
+
+  //pin function
+
+  const sortedAnnouncements = [...filteredAnnouncements].sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+
+    // Same pin status → newest first
+    return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+  });
+
+  return (
+    <div className="w-full space-y-5">
+      {/* Header */}
+
+      <div className="bg-white rounded-2xl  border-gray-200 p-5 shadow-sm flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-[#0B2B57]">
+          Company Announcements
+        </h2>
+        <span>
+          <div className="relative flex gap-8">
+
+            <input
+              type="text"
+              placeholder="search by Date, Title..."
+              value={search}
+              onChange={handleChange}
+              className=" p-2 border rounded-xl w-full" />
+            <Search size={20} className="absolute text-gray-500 right-3 top-3  " />
+          </div>
+        </span>
+        <span className="px-4 py-2 bg-gray-100 rounded-full text-sm font-medium text-gray-500">
+          {announcements.filter((item) => (item.isRead == false)).length} unread
+        </span>
+      </div>
+
+      {/* Announcements */}
+
+      <div className=" rounded-2xl   p-4  space-y-4">
+
+        {sortedAnnouncements.length > 0 ? (
+          sortedAnnouncements.map((item) => {
+            const authorDisplay = (item.author && item.author.trim() !== "") ? item.author : "Admin";
+            const authorInitial = authorDisplay.charAt(0).toUpperCase();
+
+            return (
+              <motion.div
+                key={item._id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                whileHover={{ y: -2 }}
+                className={`border border-gray-100 border-l-4 ${
+                  item.priority?.toLowerCase() === "high"
+                    ? "border-l border-red-500"
+                    : item.priority?.toLowerCase() === "med"
+                    ? "border-yellow-300"
+                    : "border-green-600"
+                } cursor-pointer bg-white rounded-2xl p-5 hover:shadow-md transition-all`}
+                onClick={() => handleRead(item)}
+              >
+                <div className="flex justify-between items-start">
+                  <span
+                    className={`px-4 py-1 rounded-full text-xs font-semibold ${
+                      item.priority?.toLowerCase() === "high"
+                        ? " bg-red-300 text-red-700"
+                        : item.priority?.toLowerCase() === "med"
+                        ? "bg-yellow-200 text-yellow-700"
+                        : "bg-green-300 text-green-700"
+                    }`}
+                  >
+                    {item.priority}
+                  </span>
+                  <span className="flex gap-4">
+                    <Pin
+                      size={16}
+                      onClick={(e) => {
+                        e.stopPropagation(); // Prevent opening FullAnnouncements
+                        togglePin(item._id);
+                      }}
+                      className={`cursor-pointer transition-colors ${
+                        item.pinned
+                          ? "fill-yellow-500 text-yellow-500"
+                          : "text-gray-500"
+                      }`}
+                    />
+                  </span>
+                </div>
+
+                <h3 className="mt-4 text-xl font-bold text-[#0B2B57]">
+                  {item.title}
+                </h3>
+
+                <p className="text-gray-500 mt-3 leading-relaxed">
+                  {item.description?.length > 100
+                    ? `${item.description.slice(0, 100)}...`
+                    : item.description}
+                </p>
+
+                <div className="flex items-center justify-between mt-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-[#0B2B57] text-white flex items-center justify-center font-semibold">
+                      {authorInitial}
+                    </div>
+
+                    <div>
+                      <p className="font-semibold text-sm">
+                        {authorDisplay.toUpperCase()}
+                      </p>
+
+                      <p className="text-xs text-gray-500">
+                        {item.role || "Company Wide"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="text-sm text-gray-400">
+                    {item.date}
+                  </p>
+                </div>
+              </motion.div>
+            );
+          })
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white border border-dashed border-gray-300 rounded-2xl py-16 px-8 text-center"
+          >
+            <div className="mx-auto w-16 h-16 rounded-full bg-blue-50 flex items-center justify-center mb-4">
+              <Search size={30} className="text-blue-600" />
+            </div>
+
+            <h3 className="text-xl font-bold text-[#0B2B57]">
+              No Announcements Found
+            </h3>
+
+            <p className="mt-2 text-xs text-gray-500 max-w-md mx-auto">
+              There are currently no company announcements available.
+            </p>
+          </motion.div>
+        )}
+      </div>
+      {showForm &&
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <FullAnnouncements
+            onClose={() => setShowForm(false)}
+            selectedAnnouncements={selectedAnnouncements}
+          />
+        </div>
+
+      }
+      {showAnnouncementForm &&
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <AnnouncementForm
+            onClose={() => setShowAnnouncementForm(false)
+            }
+            fetchAnnouncements={fetchAnnouncements}
+
+          />
+        </div>
+
+      }
+    </div>
+  );
+};
+
+export default CompanyAnnouncements;

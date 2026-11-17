@@ -1,0 +1,174 @@
+import React, { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import { Send, Clock, Activity as ActivityIcon, Trash2 } from "lucide-react";
+import { apiUrl } from "../../config/api";
+import { useAuth } from "../../context/AuthContext";
+
+export default function TaskActivity({ task, tasks, onRefresh }) {
+  const { user } = useAuth();
+  const currentTask = task || (Array.isArray(tasks) ? tasks[0] : tasks) || {};
+  const taskId = currentTask?._id || currentTask?.id;
+
+  const [newActivity, setNewActivity] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [activityList, setActivityList] = useState([]);
+
+  const fetchActivities = async () => {
+    if (!taskId) return;
+    try {
+      const res = await fetch(apiUrl(`/activity?taskId=${taskId}`));
+      if (res.ok) {
+        const json = await res.json();
+        const data = json.data || json || [];
+        setActivityList(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error("Error fetching activities for admin:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchActivities();
+  }, [taskId]);
+
+  const handleAddActivity = async () => {
+    if (!newActivity.trim()) {
+      alert("Please enter an activity note.");
+      return;
+    }
+    if (!taskId) {
+      alert("Task not selected.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(apiUrl("/activity"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee_uid: user?.uid || user?._id || "admin",
+          name: user?.displayName || user?.name || "Admin",
+          text: newActivity,
+          taskId: String(taskId),
+        }),
+      });
+
+      if (res.ok) {
+        setNewActivity("");
+        alert("Activity posted successfully!");
+        fetchActivities();
+        if (onRefresh) onRefresh();
+      } else {
+        alert("Failed to post activity.");
+      }
+    } catch (err) {
+      console.error("Error posting activity:", err);
+      alert("Failed to post activity.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteActivity = async (activityId) => {
+    if (!window.confirm("Are you sure you want to delete this activity log?")) return;
+    if (!activityId) return;
+
+    try {
+      const res = await fetch(apiUrl(`/activity/${activityId}`), {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        setActivityList((prev) => prev.filter((item) => (item._id || item.id) !== activityId));
+        alert("Activity log deleted successfully!");
+        fetchActivities();
+        if (onRefresh) onRefresh();
+      } else {
+        alert("Failed to delete activity log.");
+      }
+    } catch (err) {
+      console.error("Error deleting activity:", err);
+      alert("Failed to delete activity log.");
+    }
+  };
+
+  return (
+    <div className="bg-[#f5f2ec] p-4 md:p-8 min-h-[500px]">
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* ADD ACTIVITY SECTION */}
+        <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-xs space-y-4">
+          <h3 className="font-bold text-[#082f57] text-base flex items-center gap-2">
+            <ActivityIcon size={18} className="text-[#2563a9]" />
+            Post Admin Task Activity / Note
+          </h3>
+
+          <textarea
+            value={newActivity}
+            onChange={(e) => setNewActivity(e.target.value)}
+            placeholder="Type activity details or admin notes..."
+            className="w-full h-28 bg-gray-50 border border-gray-200 rounded-xl p-4 outline-none text-sm text-gray-800 focus:border-[#2563a9] transition-all resize-none"
+          />
+
+          <div className="flex justify-end">
+            <button
+              disabled={submitting}
+              onClick={handleAddActivity}
+              className="bg-[#2563a9] hover:bg-[#1d4ed8] text-white px-6 py-2.5 rounded-xl font-semibold text-xs flex items-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
+            >
+              <Send size={14} />
+              {submitting ? "Posting..." : "Post Activity"}
+            </button>
+          </div>
+        </div>
+
+        {/* TIMELINE SECTION */}
+        <div className="space-y-4 pt-2">
+          <h2 className="font-bold text-gray-600 text-sm uppercase tracking-wider flex items-center gap-2">
+            <Clock size={16} />
+            Activity Timeline History
+          </h2>
+
+          {activityList.length === 0 ? (
+            <div className="bg-white p-8 rounded-2xl border border-gray-200 text-center text-gray-500 text-sm">
+              No activity logs recorded yet for this task.
+            </div>
+          ) : (
+            <div className="relative pl-6 space-y-6 border-l-2 border-blue-200 mt-4">
+              {activityList.map((item, index) => (
+                <motion.div
+                  key={item._id || index}
+                  initial={{ opacity: 0, x: -15 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="relative bg-white p-5 rounded-xl border border-gray-200 shadow-xs space-y-2"
+                >
+                  {/* Timeline Dot */}
+                  <div className="absolute -left-[31px] top-5 w-4 h-4 rounded-full bg-[#2563a9] border-2 border-white" />
+
+                  <div className="flex justify-between items-center text-xs text-gray-500">
+                    <span className="font-bold text-[#082f57]">{item.name || "User"}</span>
+                    <div className="flex items-center gap-3">
+                      <span>{item.createdAt ? new Date(item.createdAt).toLocaleString() : item.time || "Just now"}</span>
+                      <button
+                        onClick={() => handleDeleteActivity(item._id || item.id)}
+                        title="Delete Activity Log"
+                        className="p-1 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-gray-700 text-sm whitespace-pre-wrap leading-relaxed">
+                    {item.text}
+                  </p>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

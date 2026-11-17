@@ -1,0 +1,67 @@
+import React, { useEffect } from 'react';
+import { Outlet, Navigate, useLocation } from 'react-router-dom';
+import Sidebar from './sidebar';
+import { useAuth } from '../context/AuthContext';
+import { motion, AnimatePresence } from 'framer-motion';
+import toast from 'react-hot-toast';
+import { socket } from '../config/socket';
+import { canAccessAdminPath, getAdminLandingPath, getUserDepartment, isHRDepartment } from '../data/departmentModuleAccess';
+
+export default function Layout() {
+  const { user, isAdmin, loading } = useAuth();
+  const location = useLocation();
+
+  // Keep the global socket connected for real-time updates across the app
+  useEffect(() => {
+    if (!socket) return;
+
+    if (!socket.connected) {
+      socket.connect();
+    }
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-gray-50">
+        <motion.div
+          animate={{ scale: [1, 1.1, 1] }}
+          transition={{ repeat: Infinity, duration: 1 }}
+          className="w-12 h-12 bg-black rounded-xl"
+        />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const department = getUserDepartment(user);
+
+  if (!isAdmin && !isHRDepartment(department)) {
+    return <Navigate to="/employee-dashboard" replace />;
+  }
+
+  if (!canAccessAdminPath(location.pathname, department)) {
+    return <Navigate to={getAdminLandingPath(department)} replace />;
+  }
+
+  return (
+    <div className="flex bg-[#FBFBFA] min-h-screen">
+      <Sidebar />
+      <main className="flex-1 overflow-auto pt-14 lg:pt-0">
+        <AnimatePresence mode="wait">
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="h-full"
+          >
+            <Outlet />
+          </motion.div>
+        </AnimatePresence>
+      </main>
+    </div>
+  );
+}

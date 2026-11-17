@@ -1,0 +1,158 @@
+const express = require('express');
+const router = express.Router();
+const announcementSchema = require('../models/CommunicationModels/Announcements');
+const notificationSchema = require('../models/CommunicationModels/Notifications');
+const { getIO } = require('../Socket');
+
+//Get Announcements
+router.get("/", async (req, res) => {
+    try {
+        const result = await announcementSchema.find().sort({ createdAt: -1 });
+        res.json(result);
+    }
+    catch (error) {
+        console.error("Error fetching announcements:", error);
+        res.status(500).json({ message: "Failed to fetch Announcements" });
+    }
+});
+
+//CREATE ANNOUNCEMENT
+
+router.post("/", async (req, res) => {
+    try {
+        const result = await announcementSchema.create(
+            req.body
+        );
+
+        // Auto create system notification for employees (broadcast: employeeId left null)
+        try {
+            const notif = await notificationSchema.create({
+                title: req.body.title ? `Announcement: ${req.body.title}` : "New Company Announcement",
+                sub: req.body.role || req.body.author || "HR Manager",
+                notificationType: "Announcement",
+                isImportant: true,
+                isRead: false
+            });
+
+            // Broadcast to everyone connected, same way Project notifications go out
+            const io = getIO();
+            if (io) {
+                io.emit("newNotification", notif);
+                io.emit("announcementCreated", result);
+            }
+        } catch (notifErr) {
+            console.error("Error creating auto notification:", notifErr);
+        }
+
+        res.status(200).json(result);
+    }
+    catch (error) {
+        console.error("Error creating Announcement:", error);
+        res.status(500).json({ message: "Failed to create Announcement" });
+    }
+});
+
+//Update IsRead
+router.patch("/:id", async (req, res) => {
+    try {
+        const result = await announcementSchema.findByIdAndUpdate(
+            req.params.id,
+            { isRead: true },
+            { new: true }
+        );
+
+        if (!result) {
+            return res.status(404).json({
+                success: false,
+                message: "Announcement not found",
+            });
+        }
+
+        try {
+            const io = getIO();
+            if (io) io.emit("announcementUpdated", result);
+        } catch (e) {}
+
+        res.status(200).json({
+            success: true,
+            message: "Announcement marked as read",
+            data: result,
+        });
+    } catch (error) {
+        console.error("Error updating read status:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to update announcement",
+        });
+    }
+});
+
+//PINNED FUNCTION
+
+router.patch("/:id/pin", async (req, res) => {
+    try {
+        const announcement = await announcementSchema.findById(req.params.id);
+
+        if (!announcement) {
+            return res.status(404).json({
+                message: "Announcement not found",
+            });
+        }
+        announcement.pinned = !announcement.pinned;
+        await announcement.save();
+
+        try {
+            const io = getIO();
+            if (io) io.emit("announcementUpdated", announcement);
+        } catch (e) {}
+
+        res.status(200).json(announcement);
+
+    } catch (error) {
+        console.error("Pin Error:", error);
+
+        res.status(500).json({
+            message: error.message,
+        });
+    }
+});
+
+
+// DELETE ANNOUNCEMENT
+router.delete("/:id", async (req, res) => {
+    try {
+        const result = await announcementSchema.findByIdAndDelete(
+            req.params.id
+        );
+
+        if (!result) {
+            return res.status(404).json({
+                success: false,
+                message: "Announcement not found",
+            });
+        }
+
+        try {
+            const io = getIO();
+            if (io) io.emit("announcementDeleted", { id: req.params.id });
+        } catch (e) {}
+
+        res.status(200).json({
+            success: true,
+            message: "Announcement deleted successfully",
+            data: result,
+        });
+
+    } catch (error) {
+        console.error("Delete Error:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to delete announcement",
+            error: error.message,
+        });
+    }
+});
+
+module.exports = router;
