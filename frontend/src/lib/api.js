@@ -1,12 +1,5 @@
 import axios from "axios";
-
-const defaultApiUrl = import.meta.env.DEV
-  ? "http://localhost:5000/api"
-  : "https://pearlscrm-1.onrender.com/api";
-
-export const BASE_URL = import.meta.env.DEV
-  ? defaultApiUrl
-  : import.meta.env.VITE_API_URL || defaultApiUrl;
+import { BASE_URL } from "../config/api";
 
 const api = axios.create({
   baseURL: BASE_URL,

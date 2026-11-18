@@ -130,9 +130,17 @@ const PersonalDetails = ({ startEditing = false }) => {
                 {/* Your section cards */}
                 <div className=" flex flex-col gap-8 bg-white rounded-lg mt-8 p-1 col-span-2">
                     <div className="flex gap-4 justify-between items-center">
-                        <h3 className="font-bold text-2xl"> Personal Information</h3>
-
+                        <h3 className="font-bold text-2xl">Personal Information</h3>
+                        <button
+                            type="button"
+                            className="bg-blue-900 text-white font-semibold text-sm px-4 py-2 rounded-lg hover:bg-blue-800 transition duration-300 disabled:opacity-60"
+                            onClick={handleSubmit}
+                            disabled={saving}
+                        >
+                            {saving ? "Saving..." : isEditing ? "Save Info" : "Edit Info"}
+                        </button>
                     </div>
+                    {message.text && <p className={message.type === 'error' ? 'text-red-600 text-sm' : 'text-green-600 text-sm'}>{message.text}</p>}
                     <div className="flex ml-4 mr-4 gap-4 justify-between items-center font-semibold text-gray-500">
                         <InputField
                             label="First Name:"
@@ -226,13 +234,15 @@ const PersonalDetails = ({ startEditing = false }) => {
                 <div className="bg-white rounded-lg mt-8 p-6 flex flex-col gap-4 font-bold ">
                     <div className="flex justify-between items-center">
                         <h3>JOB DETAILS</h3>
-                        <button className=" bg-blue-900 mt-2 mr-4 text-white font-semibold text-sm p-2 rounded-lg hover:scale-105 transition duration-300"
+                        <button
+                            type="button"
+                            className="bg-blue-900 text-white font-semibold text-sm px-4 py-2 rounded-lg hover:bg-blue-800 transition duration-300 disabled:opacity-60"
                             onClick={handleSubmit}
-                            disabled={saving}>
-                            {saving ? "Saving..." : isEditing ? "Save Info" : "Update Info"}
+                            disabled={saving}
+                        >
+                            {saving ? "Saving..." : isEditing ? "Save Info" : "Edit Info"}
                         </button>
                     </div>
-                    {message.text && <p className={message.type === 'error' ? 'text-red-600 text-sm' : 'text-green-600 text-sm'}>{message.text}</p>}
                     <div>
                         <InputField
                             label="Designation:"

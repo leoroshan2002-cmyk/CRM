@@ -3,9 +3,14 @@ const defaultApiUrl = import.meta.env.DEV
   ? "http://localhost:5000/api"
   : "https://pearlscrm-1.onrender.com/api";
 
-export const BASE_URL = import.meta.env.DEV
+const configuredApiUrl = import.meta.env.DEV
   ? defaultApiUrl
   : import.meta.env.VITE_API_URL || defaultApiUrl;
+
+const normalizedApiUrl = configuredApiUrl.replace(/\/+$/, "");
+export const BASE_URL = /\/api$/i.test(normalizedApiUrl)
+  ? normalizedApiUrl
+  : `${normalizedApiUrl}/api`;
 
 /**
  * Utility function to dynamically format API endpoints with VITE_API_URL.
