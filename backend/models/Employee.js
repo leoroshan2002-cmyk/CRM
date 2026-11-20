@@ -19,6 +19,9 @@ const employeeSchema = new mongoose.Schema(
     empId: {
       type: String,
       trim: true,
+      unique: true,
+      sparse: true,
+      immutable: true,
     },
 
     department: {

@@ -181,7 +181,19 @@ const getMe = async (req, res) => {
 
 const getAllUsers = async (req, res) => {
   try {
-    const users = await User.find().select("-password").sort({ createdAt: -1 });
+    let users = await User.find().select("-password").sort({ createdAt: -1 });
+    for (const user of users) {
+      if (user.profile?.empId) continue;
+
+      const employee = await Employee.findOne({ email: user.email.toLowerCase() }).select("empId");
+      const empId = employee?.empId || await (require("../utils/employeeId")).generatePermanentEmployeeId();
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { "profile.empId": empId } }
+      );
+      user.profile = user.profile || {};
+      user.profile.empId = empId;
+    }
     return res.status(200).json({
       success: true,
       data: users,

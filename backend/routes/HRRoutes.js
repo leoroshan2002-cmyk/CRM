@@ -8,6 +8,7 @@ const User = require("../models/User");
 const Employee = require("../models/Employee");
 const HRRecord = require("../models/HRRecord");
 const PerformanceReview = require("../models/Performance/ReviewModel");
+const { generatePermanentEmployeeId } = require("../utils/employeeId");
 
 const router = express.Router();
 const uploadDir = path.join(__dirname, "../private-uploads/hr-documents");
@@ -280,11 +281,10 @@ const hireCandidate = async (record) => {
 
   let employee = await Employee.findOne({ email });
   if (!employee) {
-    const employeeCount = await Employee.countDocuments();
     employee = await Employee.create({
       employeeName: cleanText(details.candidateName),
       employeeRole: cleanText(details.jobTitle) || "Employee",
-      empId: `EMP-${1001 + employeeCount}`,
+      empId: await generatePermanentEmployeeId(),
       department,
       status: "Active",
       contact,

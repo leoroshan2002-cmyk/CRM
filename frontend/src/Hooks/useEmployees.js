@@ -151,9 +151,9 @@ const useEmployees = () => {
                 };
             };
 
-            const mergedList = Array.from(map.values()).map((emp, index) => {
+            const mergedList = Array.from(map.values()).map((emp) => {
                 const existingEmpId = emp.profile?.empId || emp.empId || emp.employeeCode;
-                const finalEmpId = existingEmpId || `EMP-${1001 + index}`;
+                const finalEmpId = existingEmpId || "";
                 const unifiedSalary = extractFinalSal(emp);
                 return {
                     ...emp,

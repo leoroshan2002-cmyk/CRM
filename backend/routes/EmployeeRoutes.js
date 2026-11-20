@@ -4,6 +4,7 @@ const router = express.Router();
 
 const Employee = require("../models/Employee");
 const { DEFAULT_DEPARTMENT } = require("../config/departments");
+const { generatePermanentEmployeeId } = require("../utils/employeeId");
 
 // CREATE EMPLOYEE
 router.post("/", async (req, res) => {
@@ -49,11 +50,18 @@ router.post("/", async (req, res) => {
             });
         }
 
-        // Generate empId if not provided
-        let assignedEmpId = req.body.empId;
-        if (!assignedEmpId) {
-            const count = await Employee.countDocuments();
-            assignedEmpId = `EMP-${1001 + count}`;
+        // Employee ID is permanent and generated once during creation.
+        let assignedEmpId = String(req.body.empId || "").trim();
+        if (assignedEmpId) {
+            const existingId = await Employee.findOne({ empId: assignedEmpId });
+            if (existingId) {
+                return res.status(409).json({
+                    success: false,
+                    message: "This Employee ID is already assigned",
+                });
+            }
+        } else {
+            assignedEmpId = await generatePermanentEmployeeId();
         }
 
         const employee = await Employee.create({
@@ -70,6 +78,14 @@ router.post("/", async (req, res) => {
             sme: !!sme,
             tasks: [],
         });
+
+        try {
+            const User = require("../models/User");
+            await User.findOneAndUpdate(
+                { email: resolvedEmail },
+                { $set: { "profile.empId": assignedEmpId } }
+            );
+        } catch (_) {}
 
         res.status(201).json({
             success: true,
@@ -151,7 +167,18 @@ router.post("/bulk-delete", async (req, res) => {
 // GET ALL EMPLOYEES
 router.get("/", async (req, res) => {
     try {
-        const employees = await Employee.find().sort({ createdAt: -1 }).populate("tasks");
+        let employees = await Employee.find().sort({ createdAt: -1 }).populate("tasks");
+        for (const employee of employees) {
+            if (!employee.empId) {
+                employee.empId = await generatePermanentEmployeeId();
+                await employee.save();
+                const User = require("../models/User");
+                await User.findOneAndUpdate(
+                    { email: employee.email.toLowerCase() },
+                    { $set: { "profile.empId": employee.empId } }
+                );
+            }
+        }
         res.json(employees);
     } catch (error) {
         res.status(500).json({
@@ -262,6 +289,12 @@ router.put("/:id", async (req, res) => {
         let updated = null;
 
         const updatePayload = { ...req.body };
+        delete updatePayload.empId;
+        delete updatePayload.employeeId;
+        if (updatePayload.profile && typeof updatePayload.profile === "object") {
+            delete updatePayload.profile.empId;
+            delete updatePayload.profile.employeeId;
+        }
         if (req.body.name && !req.body.employeeName) {
             updatePayload.employeeName = req.body.name;
         }
@@ -307,9 +340,6 @@ router.put("/:id", async (req, res) => {
             if (req.body.status) {
                 userUpdate["status"] = req.body.status;
             }
-            if (req.body.empId) {
-                userUpdate["profile.empId"] = req.body.empId;
-            }
             if (req.body.location || req.body.workLocation) {
                 userUpdate["profile.workLocation"] = req.body.location || req.body.workLocation;
             }
@@ -335,11 +365,10 @@ router.put("/:id", async (req, res) => {
             }
 
             if (Object.keys(userUpdate).length > 0) {
-                if (mongoose.Types.ObjectId.isValid(id)) {
-                    await User.findByIdAndUpdate(id, { $set: userUpdate });
-                } else {
-                    await User.findOneAndUpdate({ email: (updated?.email || id).toLowerCase() }, { $set: userUpdate });
-                }
+                await User.findOneAndUpdate(
+                    { email: (updated?.email || "").toLowerCase() },
+                    { $set: userUpdate }
+                );
             }
         } catch (userSyncErr) {
             console.warn("User sync warning on employee update:", userSyncErr.message);

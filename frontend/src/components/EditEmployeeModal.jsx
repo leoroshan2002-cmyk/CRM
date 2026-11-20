@@ -75,7 +75,6 @@ export default function EditEmployeeModal({ employee, onClose, onSuccess }) {
         joinDate: formData.joinDate,
         status: formData.status,
         sme: formData.sme,
-        empId: formData.empId.trim(),
         notes: formData.notes,
         description: formData.notes,
 
@@ -86,7 +85,6 @@ export default function EditEmployeeModal({ employee, onClose, onSuccess }) {
         address: formData.address,
         profile: {
           ...profile,
-          empId: formData.empId.trim(),
           dob: formData.dob || undefined,
           gender: formData.gender,
           emergencyNo: formData.emergencyNo,
@@ -292,7 +290,7 @@ export default function EditEmployeeModal({ employee, onClose, onSuccess }) {
                 name="empId"
                 value={formData.empId}
                 onChange={handleChange}
-                placeholder="e.g. EMP-1001"
+                disabled
               />
             </div>
 
