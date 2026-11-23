@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import {
-  BarChart3,
   CheckCircle2,
   FileText,
   Filter,
   Pencil,
   Plus,
   Search,
+  Save,
   Send,
   Trash2,
   XCircle,
@@ -26,6 +26,8 @@ import {
   CartesianGrid,
 } from "recharts";
 import quotationApi from "../services/quotationApi.js";
+import { apiUrl } from "../config/api.js";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const STATUS_OPTIONS = [
   "Draft",
@@ -46,27 +48,44 @@ const TABS = [
   { key: "create", label: "Create Quotation" },
   { key: "templates", label: "Templates" },
   { key: "settings", label: "Settings" },
+  { key: "catalog", label: "Service & Pricing" },
 ];
 
-const DEFAULT_ITEMS = [
-  {
-    id: Date.now(),
-    name: "",
-    description: "",
-    quantity: 1,
-    unit: "pcs",
-    unitPrice: 0,
-    discountType: "none",
-    discountValue: 0,
-    tax: 0,
-    taxPercentage: 0,
-    lineTotal: 0,
-  },
-];
+const createBlankItem = () => ({
+  id: `${Date.now()}-${Math.random()}`,
+  name: "",
+  description: "",
+  quantity: 1,
+  unit: "pcs",
+  unitPrice: 0,
+  discountType: "none",
+  discountValue: 0,
+  tax: 0,
+  taxPercentage: 0,
+  lineTotal: 0,
+});
+
+const dateInputValue = (value) => (value ? new Date(value).toISOString().slice(0, 10) : "");
+
+const shiftDate = (date, offset) => {
+  if (!date) return "";
+  const shifted = new Date(`${date}T00:00:00Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + offset);
+  return shifted.toISOString().slice(0, 10);
+};
+
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  "\"": "&quot;",
+  "'": "&#39;",
+})[character]);
 
 const DEFAULT_FORM = {
   quotationNumber: "QT-2026-0001",
   customerName: "",
+  clientId: "",
   companyName: "",
   email: "",
   phone: "",
@@ -97,7 +116,14 @@ const DEFAULT_FORM = {
     service: 0,
     other: 0,
   },
-  items: DEFAULT_ITEMS,
+  items: [createBlankItem()],
+  duration: {
+    type: "",
+    name: "",
+    startDate: "",
+    endDate: "",
+    days: 0,
+  },
 };
 
 const toCurrency = (value) =>
@@ -141,10 +167,9 @@ const calculateTotals = (items, additionalCharges = {}) => {
     return sum + taxable * ((Number(item.taxPercentage || item.tax || 0) || 0) / 100);
   }, 0);
 
-  const additional = Object.values(additionalCharges || {}).reduce(
-    (sum, value) => sum + Number(value || 0),
-    0,
-  );
+  const additional = additionalCharges && typeof additionalCharges === "object"
+    ? Object.values(additionalCharges).reduce((sum, value) => sum + Number(value || 0), 0)
+    : Number(additionalCharges || 0);
 
   const discountTotal = items.reduce((sum, item) => {
     const quantity = Number(item.quantity || 0);
@@ -170,24 +195,11 @@ const calculateTotals = (items, additionalCharges = {}) => {
 const buildBlankForm = () => ({
   ...DEFAULT_FORM,
   quotationNumber: `QT-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`,
-  items: [
-    {
-      id: Date.now(),
-      name: "",
-      description: "",
-      quantity: 1,
-      unit: "pcs",
-      unitPrice: 0,
-      discountType: "none",
-      discountValue: 0,
-      tax: 0,
-      taxPercentage: 0,
-      lineTotal: 0,
-    },
-  ],
+  items: [createBlankItem()],
 });
 
 export default function QuotationManagement() {
+  const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const currentPath = location.pathname;
@@ -197,18 +209,29 @@ export default function QuotationManagement() {
   const navigateToQuotationPath = (path = "") => navigate(`${quotationBasePath}${path}`);
 
   const [quotations, setQuotations] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [selectedId, setSelectedId] = useState("");
   const [selectedQuotation, setSelectedQuotation] = useState(null);
   const [form, setForm] = useState(buildBlankForm());
+  const [catalog, setCatalog] = useState({ services: [], packages: [], durations: [] });
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [clients, setClients] = useState([]);
+  const [serviceDrafts, setServiceDrafts] = useState([]);
+  const [newService, setNewService] = useState({ name: "", description: "", price: 0, active: true, subServices: [] });
+  const [packageDraft, setPackageDraft] = useState({ name: "", description: "", price: 0, active: true, selectedServices: [] });
+  const [packageServiceId, setPackageServiceId] = useState("");
+  const [packageSubServiceId, setPackageSubServiceId] = useState("");
+  const [durationDrafts, setDurationDrafts] = useState([]);
+  const [selectedServiceId, setSelectedServiceId] = useState("");
 
   const activeTab = useMemo(() => {
     if (currentPath.includes("/create")) return "create";
     if (currentPath.includes("/templates")) return "templates";
     if (currentPath.includes("/settings")) return "settings";
+    if (currentPath.includes("/catalog")) return "catalog";
     if (currentPath === quotationBasePath || currentPath === `${quotationBasePath}/`) return "all";
     return "overview";
   }, [currentPath, quotationBasePath]);
@@ -226,8 +249,73 @@ export default function QuotationManagement() {
     }
   };
 
+  const applyCatalog = (data) => {
+    const nextCatalog = {
+      services: data.services || [],
+      packages: data.packages || [],
+      durations: data.durations || [],
+    };
+    setCatalog(nextCatalog);
+    setServiceDrafts(nextCatalog.services.map((service) => ({
+      ...service,
+      subServices: (service.subServices || []).map((subService) => ({ ...subService })),
+    })));
+    setDurationDrafts(nextCatalog.durations.map((duration) => ({ ...duration })));
+  };
+
+  const loadCatalog = async () => {
+    try {
+      applyCatalog(await quotationApi.catalog());
+    } catch (error) {
+      toast.error(error.message || "Unable to load service catalog.");
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
   useEffect(() => {
-    loadQuotations();
+    let active = true;
+    quotationApi.list()
+      .then((data) => {
+        if (active) setQuotations(Array.isArray(data) ? data : []);
+      })
+      .catch((error) => {
+        if (active) {
+          toast.error(error.message || "Unable to load quotations.");
+          setQuotations([]);
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    quotationApi.catalog()
+      .then((data) => {
+        if (active) applyCatalog(data);
+      })
+      .catch((error) => {
+        if (active) toast.error(error.message || "Unable to load service catalog.");
+      })
+      .finally(() => {
+        if (active) setCatalogLoading(false);
+      });
+
+    const token = localStorage.getItem("token");
+    fetch(apiUrl("/clients"), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Unable to load clients.");
+        const data = await response.json();
+        if (active) setClients(Array.isArray(data) ? data : []);
+      })
+      .catch((error) => {
+        if (active) toast.error(error.message || "Unable to load clients.");
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const filteredQuotations = useMemo(() => {
@@ -307,6 +395,263 @@ export default function QuotationManagement() {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const selectClient = (clientId) => {
+    const client = clients.find((item) => item._id === clientId);
+    setForm((prev) => ({
+      ...prev,
+      clientId,
+      customerName: client?.projectName || client?.companyName || prev.customerName,
+      companyName: client?.companyName || prev.companyName,
+      email: client?.email || prev.email,
+      phone: client?.contactNumber || prev.phone,
+      billingAddress: client?.headquarters || prev.billingAddress,
+    }));
+  };
+
+  const makeServiceItem = (service, subService = null) => ({
+    ...createBlankItem(),
+    name: subService?.name || service.name,
+    description: subService
+      ? `${service.name} - ${subService.description || subService.name}`
+      : service.description || service.name,
+    unitPrice: Number(subService?.price ?? service.price ?? 0),
+    serviceId: String(service._id),
+    subServiceId: subService ? String(subService._id) : "",
+    catalogServiceName: service.name,
+    catalogSubServiceName: subService?.name || "",
+  });
+
+  const isServiceSelectionActive = (serviceId, subServiceId = "") =>
+    form.items.some((item) =>
+      item.serviceId === String(serviceId) &&
+      String(item.subServiceId || "") === String(subServiceId || ""),
+    ) ||
+    form.items.some((item) =>
+      (item.serviceSelections || []).some((selection) =>
+        selection.serviceId === String(serviceId) &&
+        String(selection.subServiceId || "") === String(subServiceId || ""),
+      ),
+    );
+
+  const toggleServiceSelection = (service, subService = null) => {
+    const serviceId = String(service._id);
+    const subServiceId = subService ? String(subService._id) : "";
+    setForm((prev) => {
+      const currentItems = prev.items.flatMap((item) => {
+        if (!item.packageId) return [item];
+        return (item.serviceSelections || []).map((selection) => ({
+          ...createBlankItem(),
+          name: selection.subServiceName || selection.serviceName,
+          description: selection.subServiceName
+            ? `${selection.serviceName} - ${selection.subServiceName}`
+            : selection.serviceName,
+          unitPrice: Number(selection.unitPrice || 0),
+          serviceId: selection.serviceId,
+          subServiceId: selection.subServiceId || "",
+          catalogServiceName: selection.serviceName,
+          catalogSubServiceName: selection.subServiceName || "",
+        }));
+      });
+      const alreadySelected = currentItems.some((item) =>
+        item.serviceId === serviceId && String(item.subServiceId || "") === subServiceId,
+      );
+      let nextItems = alreadySelected
+        ? currentItems.filter((item) =>
+          !(item.serviceId === serviceId && String(item.subServiceId || "") === subServiceId),
+        )
+        : [
+          ...currentItems.filter((item) => item.name || item.serviceId),
+          makeServiceItem(service, subService),
+        ];
+      if (nextItems.length === 0) nextItems = [createBlankItem()];
+      return { ...prev, items: nextItems };
+    });
+  };
+
+  const applyPackage = (packageId) => {
+    const quotationPackage = catalog.packages.find((item) => String(item._id) === packageId);
+    if (!quotationPackage) return;
+    const serviceSelections = quotationPackage.selectedServices.map((selection) => {
+      const service = catalog.services.find((item) => String(item._id) === selection.serviceId);
+      const subService = service?.subServices?.find((item) => String(item._id) === selection.subServiceId);
+      return {
+        serviceId: selection.serviceId,
+        subServiceId: selection.subServiceId || "",
+        serviceName: selection.serviceName || service?.name || "",
+        subServiceName: selection.subServiceName || subService?.name || "",
+        unitPrice: Number(subService?.price ?? service?.price ?? 0),
+      };
+    });
+    setForm((prev) => ({
+      ...prev,
+      items: [
+        ...prev.items.filter((item) => !item.serviceId && !item.packageId && item.name),
+        {
+          ...createBlankItem(),
+          name: quotationPackage.name,
+          description: quotationPackage.description || serviceSelections.map((selection) =>
+            [selection.serviceName, selection.subServiceName].filter(Boolean).join(" - "),
+          ).join(", "),
+          unitPrice: Number(quotationPackage.price || 0),
+          packageId: String(quotationPackage._id),
+          serviceSelections,
+        },
+      ],
+    }));
+  };
+
+  const updateDurationOption = (durationId) => {
+    const option = catalog.durations.find((item) => String(item._id) === durationId);
+    if (!option) {
+      updateFormField("duration", { type: "", name: "", startDate: "", endDate: "", days: 0 });
+      return;
+    }
+    const startDate = form.duration.startDate || "";
+    updateFormField("duration", {
+      type: option.custom ? "custom" : "fixed",
+      name: option.name,
+      startDate,
+      endDate: option.custom ? form.duration.endDate : shiftDate(startDate, Number(option.days) - 1),
+      days: option.custom ? Number(form.duration.days || 0) : Number(option.days),
+    });
+  };
+
+  const updateDurationDate = (field, value) => {
+    const option = catalog.durations.find((item) => item.name === form.duration.name);
+    const nextDuration = { ...form.duration, [field]: value };
+    if (field === "startDate" && option && !option.custom) {
+      nextDuration.endDate = shiftDate(value, Number(option.days) - 1);
+      nextDuration.days = Number(option.days);
+    } else if (nextDuration.startDate && nextDuration.endDate) {
+      const start = new Date(`${nextDuration.startDate}T00:00:00Z`);
+      const end = new Date(`${nextDuration.endDate}T00:00:00Z`);
+      nextDuration.days = Math.max(Math.floor((end - start) / 86400000) + 1, 0);
+    }
+    updateFormField("duration", nextDuration);
+  };
+
+  const updateServiceDraft = (serviceIndex, field, value) => {
+    setServiceDrafts((prev) => prev.map((service, index) =>
+      index === serviceIndex ? { ...service, [field]: value } : service,
+    ));
+  };
+
+  const updateSubServiceDraft = (serviceIndex, subServiceIndex, field, value) => {
+    setServiceDrafts((prev) => prev.map((service, index) => index === serviceIndex
+      ? {
+          ...service,
+          subServices: service.subServices.map((subService, childIndex) =>
+            childIndex === subServiceIndex ? { ...subService, [field]: value } : subService,
+          ),
+        }
+      : service,
+    ));
+  };
+
+  const saveService = async (service) => {
+    try {
+      await quotationApi.updateService(service._id, service);
+      await loadCatalog();
+      toast.success("Service and sub-services saved.");
+    } catch (error) {
+      toast.error(error.message || "Unable to save service.");
+    }
+  };
+
+  const createService = async () => {
+    try {
+      if (!newService.name.trim()) {
+        toast.error("Enter a service name.");
+        return;
+      }
+      await quotationApi.createService(newService);
+      setNewService({ name: "", description: "", price: 0, active: true, subServices: [] });
+      await loadCatalog();
+      toast.success("Service created.");
+    } catch (error) {
+      toast.error(error.message || "Unable to create service.");
+    }
+  };
+
+  const deleteService = async (serviceId) => {
+    try {
+      await quotationApi.deleteService(serviceId);
+      await loadCatalog();
+      toast.success("Service and associated packages deleted.");
+    } catch (error) {
+      toast.error(error.message || "Unable to delete service.");
+    }
+  };
+
+  const addPackageSelection = () => {
+    const service = catalog.services.find((item) => String(item._id) === packageServiceId);
+    const subService = service?.subServices?.find((item) => String(item._id) === packageSubServiceId);
+    if (!service) return;
+    const selection = {
+      serviceId: String(service._id),
+      subServiceId: subService ? String(subService._id) : "",
+      serviceName: service.name,
+      subServiceName: subService?.name || "",
+    };
+    setPackageDraft((prev) => ({
+      ...prev,
+      selectedServices: prev.selectedServices.some((item) =>
+        item.serviceId === selection.serviceId && item.subServiceId === selection.subServiceId,
+      ) ? prev.selectedServices : [...prev.selectedServices, selection],
+    }));
+  };
+
+  const editPackage = (quotationPackage) => {
+    setPackageDraft({
+      _id: quotationPackage._id,
+      name: quotationPackage.name,
+      description: quotationPackage.description || "",
+      price: quotationPackage.price,
+      active: quotationPackage.active,
+      selectedServices: quotationPackage.selectedServices.map((selection) => ({ ...selection })),
+    });
+  };
+
+  const savePackage = async () => {
+    try {
+      const payload = {
+        ...packageDraft,
+        price: Number(packageDraft.price),
+      };
+      if (!payload.name.trim() || payload.selectedServices.length === 0) {
+        toast.error("Enter a package name and select at least one service.");
+        return;
+      }
+      if (packageDraft._id) await quotationApi.updatePackage(packageDraft._id, payload);
+      else await quotationApi.createPackage(payload);
+      setPackageDraft({ name: "", description: "", price: 0, active: true, selectedServices: [] });
+      await loadCatalog();
+      toast.success("Package saved.");
+    } catch (error) {
+      toast.error(error.message || "Unable to save package.");
+    }
+  };
+
+  const deletePackage = async (packageId) => {
+    try {
+      await quotationApi.deletePackage(packageId);
+      await loadCatalog();
+      toast.success("Package deleted.");
+    } catch (error) {
+      toast.error(error.message || "Unable to delete package.");
+    }
+  };
+
+  const saveDurations = async () => {
+    try {
+      await quotationApi.updateDurations(durationDrafts);
+      await loadCatalog();
+      toast.success("Duration options saved.");
+    } catch (error) {
+      toast.error(error.message || "Unable to save duration options.");
+    }
+  };
+
   const updateItem = (index, field, value) => {
     setForm((prev) => ({
       ...prev,
@@ -322,25 +667,22 @@ export default function QuotationManagement() {
     }));
   };
 
+  const updateAdditionalCharge = (field, value) => {
+    setForm((prev) => {
+      const currentCharges = prev.additionalCharges && typeof prev.additionalCharges === "object"
+        ? prev.additionalCharges
+        : { ...DEFAULT_FORM.additionalCharges, other: Number(prev.additionalCharges || 0) };
+      return {
+        ...prev,
+        additionalCharges: { ...currentCharges, [field]: Number(value || 0) },
+      };
+    });
+  };
+
   const addItem = () => {
     setForm((prev) => ({
       ...prev,
-      items: [
-        ...prev.items,
-        {
-          id: Date.now() + Math.random(),
-          name: "",
-          description: "",
-          quantity: 1,
-          unit: "pcs",
-          unitPrice: 0,
-          discountType: "none",
-          discountValue: 0,
-          tax: 0,
-          taxPercentage: 0,
-          lineTotal: 0,
-        },
-      ],
+      items: [...prev.items.filter((item) => item.name || item.serviceId), createBlankItem()],
     }));
   };
 
@@ -356,10 +698,20 @@ export default function QuotationManagement() {
       toast.error("Customer, quotation date, valid until, and at least one item are required.");
       return;
     }
+    if ((!form.duration?.type && !selectedId) ||
+      (form.duration?.type && (!form.duration.startDate || !form.duration.endDate || Number(form.duration.days) < 1))) {
+      toast.error("Select a duration and provide valid start and end dates.");
+      return;
+    }
+    if (form.duration?.startDate && form.duration?.endDate && form.duration.endDate < form.duration.startDate) {
+      toast.error("The service end date cannot be before its start date.");
+      return;
+    }
 
     const totals = calculateTotals(form.items, form.additionalCharges);
     const payload = {
       ...form,
+      client: form.clientId || null,
       companyDetails: {
         companyName: form.companyName || "Pearls IT Hub",
         email: form.email || "sales@pearlsit.com",
@@ -381,6 +733,12 @@ export default function QuotationManagement() {
         taxPercentage: Number(item.taxPercentage || item.tax || 0),
         lineTotal: calculateLineTotal(item),
       })),
+      duration: form.duration?.type
+        ? {
+            ...form.duration,
+            days: Number(form.duration.days),
+          }
+        : undefined,
       subtotal: totals.subtotal,
       discount: totals.discount,
       tax: totals.tax,
@@ -415,7 +773,13 @@ export default function QuotationManagement() {
       currency: "INR",
       quotationDate: quotation.quotationDate ? new Date(quotation.quotationDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
       validUntil: quotation.validUntil ? new Date(quotation.validUntil).toISOString().slice(0, 10) : "",
+      duration: quotation.duration ? {
+        ...quotation.duration,
+        startDate: dateInputValue(quotation.duration.startDate),
+        endDate: dateInputValue(quotation.duration.endDate),
+      } : { type: "", name: "", startDate: "", endDate: "", days: 0 },
       customerName: quotation.customerName || quotation.customerDetails?.customerName || "",
+      clientId: typeof quotation.client === "object" ? quotation.client?._id || "" : quotation.client || "",
       companyName: quotation.companyName || quotation.customerDetails?.companyName || "",
       email: quotation.email || quotation.customerDetails?.email || "",
       phone: quotation.phone || quotation.customerDetails?.phone || "",
@@ -425,7 +789,9 @@ export default function QuotationManagement() {
         ...item,
         id: item._id || `${Date.now()}-${index}`,
       })) : buildBlankForm().items,
-      additionalCharges: quotation.additionalCharges || DEFAULT_FORM.additionalCharges,
+      additionalCharges: typeof quotation.additionalCharges === "object"
+        ? { ...DEFAULT_FORM.additionalCharges, ...quotation.additionalCharges }
+        : { ...DEFAULT_FORM.additionalCharges, other: Number(quotation.additionalCharges || 0) },
     });
     navigateToQuotationPath("/create");
   };
@@ -456,6 +822,59 @@ export default function QuotationManagement() {
     } catch (error) {
       toast.error(error.message || "Unable to delete quotation.");
     }
+  };
+
+  const printQuotation = (quotation) => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      toast.error("Allow pop-ups to print the quotation.");
+      return;
+    }
+    const customer = quotation.customerDetails || {};
+    const items = (quotation.items || []).map((item, index) => `
+      <tr>
+        <td>${index + 1}</td>
+        <td><strong>${escapeHtml(item.name)}</strong><br><span>${escapeHtml(item.description || "")}</span></td>
+        <td>${Number(item.quantity || 0)}</td>
+        <td>${escapeHtml(toCurrency(item.unitPrice || 0))}</td>
+        <td>${escapeHtml(toCurrency(item.lineTotal || calculateLineTotal(item)))}</td>
+      </tr>`).join("");
+    const duration = quotation.duration || {};
+    const startDate = duration.startDate ? new Date(duration.startDate).toLocaleDateString() : "—";
+    const endDate = duration.endDate ? new Date(duration.endDate).toLocaleDateString() : "—";
+    printWindow.document.open();
+    printWindow.document.write(`<!doctype html><html><head><title>${escapeHtml(quotation.quotationNumber || "Quotation")}</title>
+      <style>
+        *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#102b65;margin:24px;font-size:12px}
+        header{border-bottom:5px solid #1685e8;padding:8px 0 14px;display:flex;justify-content:space-between}
+        h1{font-size:30px;margin:12px 0;color:#092b73}h2{font-size:16px;background:#06367d;color:#fff;padding:8px;margin:18px 0 0}
+        .info{border:1px solid #1685e8;border-radius:8px;padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:7px}
+        table{width:100%;border-collapse:collapse}th{background:#e8f2ff;color:#092b73}th,td{border:1px solid #9bb9e0;padding:9px;text-align:left}
+        td span{color:#53647e}.totals{margin:18px 0 0 auto;width:300px}.totals div{display:flex;justify-content:space-between;padding:5px}
+        .total{border-top:2px solid #123f8b;font-size:16px;font-weight:bold}.notes{margin-top:24px;white-space:pre-wrap}
+        @media print{body{margin:12mm}}
+      </style></head><body>
+      <header><div><strong>${escapeHtml(quotation.companyDetails?.companyName || "Pearls IT Hub")}</strong><br>${escapeHtml(quotation.companyDetails?.phone || "")}</div><div>Quotation No.: ${escapeHtml(quotation.quotationNumber || "")}<br>Date: ${escapeHtml(dateInputValue(quotation.quotationDate))}</div></header>
+      <h1>QUOTATION</h1>
+      <h2>CLIENT DETAILS</h2><section class="info">
+        <div>Client: <strong>${escapeHtml(customer.customerName || quotation.customerName || "")}</strong></div>
+        <div>Company: <strong>${escapeHtml(customer.companyName || quotation.companyName || "")}</strong></div>
+        <div>Email: ${escapeHtml(customer.email || quotation.email || "")}</div>
+        <div>Phone: ${escapeHtml(customer.phone || quotation.phone || "")}</div>
+        <div>Address: ${escapeHtml(customer.billingAddress || quotation.billingAddress || "")}</div>
+        <div>Duration: <strong>${escapeHtml(duration.name || "—")}</strong> (${escapeHtml(startDate)} - ${escapeHtml(endDate)}${duration.days ? `, ${Number(duration.days)} days` : ""})</div>
+      </section>
+      <h2>SERVICE DETAILS</h2><table><thead><tr><th>S.No.</th><th>Service Description</th><th>Qty</th><th>Unit Price</th><th>Amount (INR)</th></tr></thead><tbody>${items}</tbody></table>
+      <section class="totals"><div><span>Subtotal</span><strong>${escapeHtml(toCurrency(quotation.subtotal || 0))}</strong></div>
+      <div><span>Discount</span><strong>-${escapeHtml(toCurrency(quotation.discount || 0))}</strong></div>
+      <div><span>Tax</span><strong>${escapeHtml(toCurrency(quotation.tax || 0))}</strong></div>
+      <div><span>Additional Charges</span><strong>${escapeHtml(toCurrency(quotation.additionalCharges || 0))}</strong></div>
+      <div class="total"><span>Total</span><strong>${escapeHtml(toCurrency(quotation.grandTotal || 0))}</strong></div></section>
+      <p class="notes"><strong>Payment terms:</strong> ${escapeHtml(quotation.paymentTerms || "—")}<br><strong>Notes:</strong> ${escapeHtml(quotation.notes || "—")}</p>
+      </body></html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
   };
 
   const tableColumns = [
@@ -651,7 +1070,7 @@ export default function QuotationManagement() {
                                     <button onClick={() => handleDuplicate(quotation)} className="rounded-lg border border-slate-200 p-1.5 hover:border-emerald-500">
                                       <FileText className="h-4 w-4 text-emerald-700" />
                         </button>
-                                    <button onClick={() => toast("PDF generation placeholder", { icon: "ℹ️" })} className="rounded-lg border border-slate-200 p-1.5 hover:border-purple-500">
+                                    <button onClick={() => printQuotation(quotation)} className="rounded-lg border border-slate-200 p-1.5 hover:border-purple-500" aria-label="Print quotation">
                                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 text-purple-700"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17.5v.5h16v-.5" /></svg>
                         </button>
                                     <button onClick={() => toast("Send quotation flow ready", { icon: "📨" })} className="rounded-lg border border-slate-200 p-1.5 hover:border-blue-500">
@@ -699,6 +1118,14 @@ export default function QuotationManagement() {
 
             <div className="space-y-4">
               <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-slate-500">Customer Details</h3>
+            <select value={form.clientId || ""} onChange={(event) => selectClient(event.target.value)} className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
+              <option value="">Select an existing client (or enter details below)</option>
+              {clients.map((client) => (
+                <option key={client._id} value={client._id}>
+                  {client.projectName ? `${client.projectName} — ` : ""}{client.companyName}
+                </option>
+              ))}
+            </select>
               <input value={form.customerName} onChange={(event) => updateFormField("customerName", event.target.value)} className="w-full rounded-xl border border-slate-200 px-3 py-2.5" placeholder="Customer Name" />
               <input value={form.companyName} onChange={(event) => updateFormField("companyName", event.target.value)} className="w-full rounded-xl border border-slate-200 px-3 py-2.5" placeholder="Customer Company" />
               <input value={form.email} onChange={(event) => updateFormField("email", event.target.value)} className="w-full rounded-xl border border-slate-200 px-3 py-2.5" placeholder="Customer Email" />
@@ -729,6 +1156,90 @@ export default function QuotationManagement() {
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.15em] text-slate-500">Service Duration</h3>
+          <div className="grid gap-4 md:grid-cols-4">
+            <select
+              value={catalog.durations.find((item) => item.name === form.duration?.name)?._id || ""}
+              onChange={(event) => updateDurationOption(event.target.value)}
+              className="rounded-xl border border-slate-200 px-3 py-2.5"
+            >
+              <option value="">Select duration</option>
+              {catalog.durations.filter((item) => item.active).map((duration) => (
+                <option key={duration._id} value={duration._id}>{duration.name}</option>
+              ))}
+            </select>
+            <label className="text-sm text-slate-600">
+              Start date
+              <input type="date" value={form.duration?.startDate || ""} onChange={(event) => updateDurationDate("startDate", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
+            </label>
+            <label className="text-sm text-slate-600">
+              End date
+              <input type="date" min={form.duration?.startDate || undefined} value={form.duration?.endDate || ""} onChange={(event) => updateDurationDate("endDate", event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5" />
+            </label>
+            <div className="rounded-xl bg-blue-50 px-3 py-2.5 text-sm text-blue-800">
+              Calculated duration
+              <p className="mt-1 font-semibold">
+                {form.duration?.days > 0 ? `${form.duration.days} day${form.duration.days === 1 ? "" : "s"}` : "Set dates to calculate"}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 grid gap-4 md:grid-cols-2">
+            <label className="text-sm font-medium text-slate-700">
+              Main service category
+              <select value={selectedServiceId} onChange={(event) => setSelectedServiceId(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5">
+                <option value="">Select a service</option>
+                {catalog.services.filter((service) => service.active).map((service) => (
+                  <option key={service._id} value={service._id}>{service.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              Apply a saved package
+              <select
+                value=""
+                onChange={(event) => applyPackage(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5"
+              >
+                <option value="">Choose a package to use its price</option>
+                {catalog.packages.filter((quotationPackage) => quotationPackage.active).map((quotationPackage) => (
+                  <option key={quotationPackage._id} value={quotationPackage._id}>
+                    {quotationPackage.name} — {toCurrency(quotationPackage.price)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {selectedServiceId && (() => {
+            const service = catalog.services.find((item) => String(item._id) === selectedServiceId);
+            if (!service) return null;
+            return (
+              <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="mb-3 font-semibold text-slate-900">{service.name} — select one or more services</p>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <span className="flex items-center gap-2">
+                      <input type="checkbox" checked={isServiceSelectionActive(service._id)} onChange={() => toggleServiceSelection(service)} />
+                      <span>{service.name} (Main service)</span>
+                    </span>
+                    <span className="font-medium">{toCurrency(service.price)}</span>
+                  </label>
+                  {service.subServices?.filter((subService) => subService.active).map((subService) => (
+                    <label key={subService._id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3">
+                      <span className="flex items-center gap-2">
+                        <input type="checkbox" checked={isServiceSelectionActive(service._id, subService._id)} onChange={() => toggleServiceSelection(service, subService)} />
+                        <span>{subService.name}</span>
+                      </span>
+                      <span className="font-medium">{toCurrency(subService.price)}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-slate-500">Quotation Items</h3>
             <button onClick={addItem} className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700">
@@ -781,6 +1292,21 @@ export default function QuotationManagement() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="mt-5 grid gap-3 md:grid-cols-3 lg:grid-cols-5">
+            {Object.keys(DEFAULT_FORM.additionalCharges).map((charge) => (
+              <label key={charge} className="text-sm text-slate-600">
+                {charge.charAt(0).toUpperCase() + charge.slice(1)} charge
+                <input
+                  type="number"
+                  min="0"
+                  value={form.additionalCharges?.[charge] || 0}
+                  onChange={(event) => updateAdditionalCharge(charge, event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2"
+                />
+              </label>
+            ))}
           </div>
 
           <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -865,6 +1391,156 @@ export default function QuotationManagement() {
     </div>
   );
 
+  const renderCatalog = () => {
+    if (!isAdmin) {
+      return (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
+          Service and pricing configuration is available to administrators only.
+        </div>
+      );
+    }
+
+    const packageService = catalog.services.find((service) => String(service._id) === packageServiceId);
+    const packageSubServices = packageService?.subServices || [];
+
+    return (
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4">
+            <h2 className="text-xl font-bold text-slate-900">Service catalog</h2>
+            <p className="text-sm text-slate-500">Create service categories and configure their sub-services and standard prices.</p>
+          </div>
+          <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+            <h3 className="mb-3 font-semibold text-slate-900">Add service category</h3>
+            <div className="grid gap-3 md:grid-cols-3">
+              <input value={newService.name} onChange={(event) => setNewService((prev) => ({ ...prev, name: event.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Service category name" />
+              <input value={newService.description} onChange={(event) => setNewService((prev) => ({ ...prev, description: event.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Description" />
+              <input type="number" min="0" value={newService.price} onChange={(event) => setNewService((prev) => ({ ...prev, price: Number(event.target.value) }))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Main service price" />
+            </div>
+            <div className="mt-3 space-y-2">
+              {newService.subServices.map((subService, index) => (
+                <div key={index} className="grid gap-2 md:grid-cols-[1fr_1fr_140px_auto]">
+                  <input value={subService.name} onChange={(event) => setNewService((prev) => ({ ...prev, subServices: prev.subServices.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) }))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Sub-service name" />
+                  <input value={subService.description} onChange={(event) => setNewService((prev) => ({ ...prev, subServices: prev.subServices.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item) }))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Description" />
+                  <input type="number" min="0" value={subService.price} onChange={(event) => setNewService((prev) => ({ ...prev, subServices: prev.subServices.map((item, itemIndex) => itemIndex === index ? { ...item, price: Number(event.target.value) } : item) }))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Price" />
+                  <button onClick={() => setNewService((prev) => ({ ...prev, subServices: prev.subServices.filter((_, itemIndex) => itemIndex !== index) }))} className="rounded-lg border border-red-200 px-3 py-2 text-red-700">Remove</button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button onClick={() => setNewService((prev) => ({ ...prev, subServices: [...prev.subServices, { name: "", description: "", price: 0, active: true }] }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700">Add sub-service</button>
+              <button onClick={createService} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white"><Plus className="h-4 w-4" />Create service</button>
+            </div>
+          </div>
+
+          {catalogLoading ? <p className="py-4 text-sm text-slate-500">Loading service catalog...</p> : (
+            <div className="space-y-4">
+              {serviceDrafts.map((service, serviceIndex) => (
+                <div key={service._id} className="rounded-xl border border-slate-200 p-4">
+                  <div className="grid gap-3 md:grid-cols-[1fr_1fr_150px_auto]">
+                    <input value={service.name} onChange={(event) => updateServiceDraft(serviceIndex, "name", event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 font-semibold" placeholder="Service category" />
+                    <input value={service.description || ""} onChange={(event) => updateServiceDraft(serviceIndex, "description", event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Description" />
+                    <input type="number" min="0" value={service.price} onChange={(event) => updateServiceDraft(serviceIndex, "price", Number(event.target.value))} className="rounded-lg border border-slate-200 px-3 py-2" aria-label="Main service price" />
+                    <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={service.active} onChange={(event) => updateServiceDraft(serviceIndex, "active", event.target.checked)} />Active</label>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {(service.subServices || []).map((subService, subServiceIndex) => (
+                      <div key={subService._id || subServiceIndex} className="grid gap-2 md:grid-cols-[1fr_1fr_140px_auto_auto]">
+                        <input value={subService.name} onChange={(event) => updateSubServiceDraft(serviceIndex, subServiceIndex, "name", event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Sub-service name" />
+                        <input value={subService.description || ""} onChange={(event) => updateSubServiceDraft(serviceIndex, subServiceIndex, "description", event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Description" />
+                        <input type="number" min="0" value={subService.price} onChange={(event) => updateSubServiceDraft(serviceIndex, subServiceIndex, "price", Number(event.target.value))} className="rounded-lg border border-slate-200 px-3 py-2" aria-label="Sub-service price" />
+                        <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={subService.active} onChange={(event) => updateSubServiceDraft(serviceIndex, subServiceIndex, "active", event.target.checked)} />Active</label>
+                        <button onClick={() => updateServiceDraft(serviceIndex, "subServices", service.subServices.filter((_, index) => index !== subServiceIndex))} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700">Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button onClick={() => updateServiceDraft(serviceIndex, "subServices", [...service.subServices, { name: "", description: "", price: 0, active: true }])} className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">Add sub-service</button>
+                    <button onClick={() => saveService(service)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white"><Save className="h-4 w-4" />Save changes</button>
+                    <button onClick={() => deleteService(service._id)} className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700"><Trash2 className="h-4 w-4" />Delete service</button>
+                  </div>
+                </div>
+              ))}
+              {!serviceDrafts.length && <p className="py-4 text-sm text-slate-500">No services configured yet.</p>}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-xl font-bold text-slate-900">Packages and combination pricing</h2>
+          <p className="mb-4 text-sm text-slate-500">Define a fixed price for a selected combination of services.</p>
+          <div className="grid gap-3 md:grid-cols-3">
+            <input value={packageDraft.name} onChange={(event) => setPackageDraft((prev) => ({ ...prev, name: event.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Package name" />
+            <input value={packageDraft.description} onChange={(event) => setPackageDraft((prev) => ({ ...prev, description: event.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Description" />
+            <input type="number" min="0" value={packageDraft.price} onChange={(event) => setPackageDraft((prev) => ({ ...prev, price: Number(event.target.value) }))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Package price" />
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+            <select value={packageServiceId} onChange={(event) => { setPackageServiceId(event.target.value); setPackageSubServiceId(""); }} className="rounded-lg border border-slate-200 px-3 py-2">
+              <option value="">Select category</option>
+              {catalog.services.filter((service) => service.active).map((service) => <option key={service._id} value={service._id}>{service.name}</option>)}
+            </select>
+            <select value={packageSubServiceId} onChange={(event) => setPackageSubServiceId(event.target.value)} className="rounded-lg border border-slate-200 px-3 py-2">
+              <option value="">Main service price</option>
+              {packageSubServices.filter((subService) => subService.active).map((subService) => <option key={subService._id} value={subService._id}>{subService.name}</option>)}
+            </select>
+            <button onClick={addPackageSelection} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700">Add selection</button>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {packageDraft.selectedServices.map((selection, index) => (
+              <span key={`${selection.serviceId}-${selection.subServiceId}-${index}`} className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-sm text-blue-800">
+                {[selection.serviceName, selection.subServiceName].filter(Boolean).join(" — ")}
+                <button aria-label="Remove package service" onClick={() => setPackageDraft((prev) => ({ ...prev, selectedServices: prev.selectedServices.filter((_, itemIndex) => itemIndex !== index) }))}><XCircle className="h-4 w-4" /></button>
+              </span>
+            ))}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={packageDraft.active} onChange={(event) => setPackageDraft((prev) => ({ ...prev, active: event.target.checked }))} />Active package</label>
+            <button onClick={savePackage} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white"><Save className="h-4 w-4" />{packageDraft._id ? "Update package" : "Create package"}</button>
+            {packageDraft._id && <button onClick={() => setPackageDraft({ name: "", description: "", price: 0, active: true, selectedServices: [] })} className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">Cancel edit</button>}
+          </div>
+          <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {catalog.packages.map((quotationPackage) => (
+              <div key={quotationPackage._id} className="flex flex-wrap items-center justify-between gap-3 p-3">
+                <div>
+                  <p className="font-semibold text-slate-900">{quotationPackage.name} <span className="font-normal text-slate-500">{toCurrency(quotationPackage.price)}</span></p>
+                  <p className="text-xs text-slate-500">{quotationPackage.selectedServices.map((selection) => [selection.serviceName, selection.subServiceName].filter(Boolean).join(" — ")).join(", ")}</p>
+                </div>
+                <div className="flex gap-2">
+                  <span className={`rounded-full px-2 py-1 text-xs ${quotationPackage.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{quotationPackage.active ? "Active" : "Inactive"}</span>
+                  <button onClick={() => editPackage(quotationPackage)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm">Edit</button>
+                  <button onClick={() => deletePackage(quotationPackage._id)} className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-700">Delete</button>
+                </div>
+              </div>
+            ))}
+            {!catalog.packages.length && <p className="p-3 text-sm text-slate-500">No packages configured.</p>}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">Duration options</h2>
+              <p className="text-sm text-slate-500">Configure the duration choices available while preparing a quotation.</p>
+            </div>
+            <button onClick={() => setDurationDrafts((prev) => [...prev, { name: "", days: 1, custom: false, active: true }])} className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">Add duration</button>
+          </div>
+          <div className="space-y-2">
+            {durationDrafts.map((duration, index) => (
+              <div key={duration._id || index} className="grid gap-2 rounded-lg border border-slate-100 p-3 md:grid-cols-[1fr_150px_auto_auto_auto]">
+                <input value={duration.name} onChange={(event) => setDurationDrafts((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} className="rounded-lg border border-slate-200 px-3 py-2" placeholder="Duration label" />
+                <input type="number" min="1" disabled={duration.custom} value={duration.custom ? "" : duration.days} onChange={(event) => setDurationDrafts((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, days: Number(event.target.value) } : item))} className="rounded-lg border border-slate-200 px-3 py-2 disabled:bg-slate-100" placeholder="Days" />
+                <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={duration.custom} onChange={(event) => setDurationDrafts((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, custom: event.target.checked, days: event.target.checked ? 0 : (item.days || 1) } : item))} />Custom dates</label>
+                <label className="flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={duration.active} onChange={(event) => setDurationDrafts((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, active: event.target.checked } : item))} />Active</label>
+                <button onClick={() => setDurationDrafts((prev) => prev.filter((_, itemIndex) => itemIndex !== index))} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700">Remove</button>
+              </div>
+            ))}
+          </div>
+          <button onClick={saveDurations} className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white"><Save className="h-4 w-4" />Save duration options</button>
+        </div>
+      </div>
+    );
+  };
+
   const details = selectedQuotation
     ? {
         customerName: selectedQuotation.customerName || selectedQuotation.customerDetails?.customerName || "—",
@@ -881,6 +1557,10 @@ export default function QuotationManagement() {
         tax: selectedQuotation.tax || 0,
         additionalCharges: selectedQuotation.additionalCharges || 0,
         discount: selectedQuotation.discount || 0,
+        durationName: selectedQuotation.duration?.name || "—",
+        durationStart: selectedQuotation.duration?.startDate ? new Date(selectedQuotation.duration.startDate).toLocaleDateString() : "—",
+        durationEnd: selectedQuotation.duration?.endDate ? new Date(selectedQuotation.duration.endDate).toLocaleDateString() : "—",
+        durationDays: selectedQuotation.duration?.days || 0,
       }
     : null;
 
@@ -900,7 +1580,7 @@ export default function QuotationManagement() {
             </div>
 
             <div className="flex items-center gap-2">
-              {TABS.map((tab) => (
+              {TABS.filter((tab) => tab.key !== "catalog" || isAdmin).map((tab) => (
                 <button
                   key={tab.key}
                   onClick={() => navigateToQuotationPath(tab.key === "overview" || tab.key === "all" ? "" : `/${tab.key}`)}
@@ -922,6 +1602,7 @@ export default function QuotationManagement() {
         {activeTab === "create" && renderCreate()}
         {activeTab === "templates" && renderTemplates()}
         {activeTab === "settings" && renderSettings()}
+        {activeTab === "catalog" && renderCatalog()}
 
         {selectedQuotation && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
@@ -958,6 +1639,12 @@ export default function QuotationManagement() {
                   <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Validity</p>
                   <p className="mt-2 text-sm text-slate-700">Issued: {details.quotationDate}</p>
                   <p className="text-sm text-slate-700">Valid Until: {details.validUntil}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Service Duration</p>
+                  <p className="mt-2 text-sm font-medium text-slate-700">{details.durationName}</p>
+                  <p className="text-sm text-slate-700">{details.durationStart} – {details.durationEnd}</p>
+                  {details.durationDays > 0 && <p className="text-sm text-slate-700">{details.durationDays} days</p>}
                 </div>
               </div>
 
