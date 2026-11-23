@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
+import { apiUrl } from "../../config/api";
 
 /* =========================================================
    API
 ========================================================= */
 
-const VITE_API_URL = import.meta.env.VITE_PYTHON_API_URL;
+const CRM_API_URL = apiUrl();
 
 /* =========================================================
    ACTION OPTIONS
@@ -82,7 +83,7 @@ export default function AutomationRules() {
       setLoading(true);
       setError("");
 
-      const response = await fetch(`${VITE_API_URL}/automation-rules`);
+      const response = await fetch(`${CRM_API_URL}/automation-rules`);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch automation rules: ${response.status}`);
@@ -205,7 +206,7 @@ export default function AutomationRules() {
         const ruleId = editingRule._id || editingRule.id;
 
         const response = await fetch(
-          `${VITE_API_URL}/automation-rules/${ruleId}`,
+          `${CRM_API_URL}/automation-rules/${ruleId}`,
           {
             method: "PUT",
 
@@ -230,7 +231,7 @@ export default function AutomationRules() {
         /* =====================================================
          CREATE NEW RULE
       ===================================================== */
-        const response = await fetch(`${VITE_API_URL}/automation-rules`, {
+        const response = await fetch(`${CRM_API_URL}/automation-rules`, {
           method: "POST",
 
           headers: {
@@ -276,7 +277,7 @@ export default function AutomationRules() {
       const ruleId = rule._id || rule.id;
 
       const response = await fetch(
-        `${VITE_API_URL}/automation-rules/${ruleId}/status`,
+        `${CRM_API_URL}/automation-rules/${ruleId}/status`,
         {
           method: "PATCH",
 
@@ -321,7 +322,7 @@ export default function AutomationRules() {
       const ruleId = rule._id || rule.id;
 
       const response = await fetch(
-        `${VITE_API_URL}/automation-rules/${ruleId}`,
+        `${CRM_API_URL}/automation-rules/${ruleId}`,
         {
           method: "DELETE",
         },

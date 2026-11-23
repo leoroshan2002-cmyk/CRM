@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { apiUrl } from "../../config/api";
 
 import {
   MessageSquare,
@@ -12,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 
-const VITE_API_URL = import.meta.env.VITE_PYTHON_API_URL;
+const CRM_API_URL = apiUrl();
 
 /* =====================================================
    PERCENTAGE HELPER
@@ -65,7 +66,7 @@ export default function WhatsAppReports() {
     try {
       setError("");
 
-      const response = await fetch(`${VITE_API_URL}/reports/summary`);
+      const response = await fetch(`${CRM_API_URL}/reports/summary`);
 
       if (!response.ok) {
         throw new Error(`Request failed: ${response.status}`);

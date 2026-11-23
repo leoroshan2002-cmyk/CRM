@@ -12,8 +12,9 @@ import {
   EyeOff,
   RefreshCcw,
 } from "lucide-react";
+import { apiUrl } from "../../config/api";
 
-const VITE_API_URL = import.meta.env.VITE_PYTHON_API_URL;
+const CRM_API_URL = apiUrl();
 
 const emptyForm = {
   phoneNumberId: "",
@@ -49,7 +50,7 @@ export default function Integrations() {
       setLoading(true);
       setError("");
 
-      const response = await fetch(`${VITE_API_URL}/whatsapp-integration`);
+      const response = await fetch(`${CRM_API_URL}/whatsapp-integration`);
 
       const data = await response.json();
 
@@ -108,7 +109,7 @@ export default function Integrations() {
       setMessage("");
       setError("");
 
-      const response = await fetch(`${VITE_API_URL}/whatsapp-integration`, {
+      const response = await fetch(`${CRM_API_URL}/whatsapp-integration`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -151,7 +152,7 @@ export default function Integrations() {
       setError("");
 
       const response = await fetch(
-        `${VITE_API_URL}/whatsapp-integration/test`,
+        `${CRM_API_URL}/whatsapp-integration/test`,
         {
           method: "POST",
           headers: {

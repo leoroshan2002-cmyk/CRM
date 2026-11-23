@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { apiUrl } from "../../config/api";
 
 import {
   BarChart,
@@ -16,7 +17,7 @@ import {
   Legend,
 } from "recharts";
 
-const VITE_API_URL = import.meta.env.VITE_PYTHON_API_URL;
+const CRM_API_URL = apiUrl();
 
 // =========================================================
 // COLORS
@@ -280,15 +281,15 @@ export default function Reports() {
         conversationsResponse,
         trendsResponse,
       ] = await Promise.all([
-        fetch(`${VITE_API_URL}/reports/summary${query}`),
+        fetch(`${CRM_API_URL}/reports/summary${query}`),
 
-        fetch(`${VITE_API_URL}/reports/conversations${query}`),
+        fetch(`${CRM_API_URL}/reports/conversations${query}`),
 
-        fetch(`${VITE_API_URL}/reports/messages${query}`),
+        fetch(`${CRM_API_URL}/reports/messages${query}`),
 
-        fetch(`${VITE_API_URL}/conversations${query}`),
+        fetch(`${CRM_API_URL}/conversations${query}`),
 
-        fetch(`${VITE_API_URL}/reports/trends${trendQuery}`),
+        fetch(`${CRM_API_URL}/reports/trends${trendQuery}`),
       ]);
 
       // ---------------------------------------------------
