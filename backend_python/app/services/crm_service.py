@@ -1,18 +1,3 @@
-"""
-Thin, reusable HTTP client for talking to the existing Node/Express CRM.
-
-Architecture:
-
-    FastAPI
-       ↓
-    CrmService
-       ↓
-    httpx
-       ↓
-    Node/Express CRM
-       ↓
-    MongoDB
-"""
 
 import logging
 from typing import Any
