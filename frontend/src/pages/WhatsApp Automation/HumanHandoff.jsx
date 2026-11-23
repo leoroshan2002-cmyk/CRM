@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { apiUrl } from "../../config/api";
 
-const VITE_PYTHON_API_URL = `${import.meta.env.VITE_PYTHON_API_URL || "http://127.0.0.1:8000"}/api/v1/handoff`;
+const CRM_HANDOFF_API_URL = apiUrl("/handoff");
 
 export default function HumanHandoff() {
   const navigate = useNavigate();
@@ -39,7 +40,7 @@ export default function HumanHandoff() {
       setLoading(true);
       setError("");
 
-      const response = await fetch(`${VITE_PYTHON_API_URL}/`);
+      const response = await fetch(CRM_HANDOFF_API_URL);
 
       if (!response.ok) {
         throw new Error("Failed to fetch handoff requests");
@@ -73,7 +74,7 @@ export default function HumanHandoff() {
   const resolveHandoff = async (handoffId) => {
     try {
       const response = await fetch(
-        `${VITE_PYTHON_API_URL}/${handoffId}/resolve`,
+        `${CRM_HANDOFF_API_URL}/${handoffId}/resolve`,
         {
           method: "PATCH",
           headers: {

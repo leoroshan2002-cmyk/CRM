@@ -359,7 +359,7 @@ export async function createHumanHandoff({
 }) {
   try {
     const response = await fetch(
-      `${import.meta.env.VITE_PYTHON_API_URL || "http://127.0.0.1:8000"}/api/v1/handoff/`,
+      `${CRM_API_URL}/handoff`,
       {
         method: "POST",
 
