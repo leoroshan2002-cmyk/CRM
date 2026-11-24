@@ -23,12 +23,14 @@ import {
   Mail,
   FileSignature,
   PenLine,
+  MessageCircle,
 } from 'lucide-react';
 
 import { useAuth } from '../../context/AuthContext';
 import { useIndustry } from '../../context/IndustryContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { canAccessEmployeeModule, getUserDepartment } from '../../data/departmentModuleAccess';
+import { WHATSAPP_EMPLOYEE_ENQUIRY_URL } from '../../data/whatsappEnquiry';
 
 export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -205,6 +207,16 @@ export default function Sidebar() {
                 <span className="truncate">{item.name}</span>
               </NavLink>
             ))}
+            <a
+              href={WHATSAPP_EMPLOYEE_ENQUIRY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Enquire about employee details on WhatsApp"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-300 font-medium text-gray-300 hover:bg-white/10 hover:text-white"
+            >
+              <MessageCircle className="w-4 h-4 flex-shrink-0" />
+              <span className="truncate">WhatsApp Enquiry</span>
+            </a>
           </div>
         </div>
 

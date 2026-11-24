@@ -42,6 +42,7 @@ import { useIndustry } from "../context/IndustryContext";
 import useEmployees from "../Hooks/useEmployees";
 import useWhatsApp from "../Hooks/useWhatsApp";
 import { canAccessAdminModule, getUserDepartment, isHRDepartment } from "../data/departmentModuleAccess";
+import { WHATSAPP_EMPLOYEE_ENQUIRY_URL } from "../data/whatsappEnquiry";
 
 export default function Sidebar() {
   const { user, logout } = useAuth();
@@ -486,6 +487,16 @@ export default function Sidebar() {
                 <span className="flex-1">{item.name}</span>
               </NavLink>
             ))}
+            <a
+              href={WHATSAPP_EMPLOYEE_ENQUIRY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Enquire about employee details on WhatsApp"
+              className={subNavLinkClass(false)}
+            >
+              <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+              <span className="flex-1">Employee Enquiry</span>
+            </a>
           </div>
         </div>
 
